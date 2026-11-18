@@ -1,0 +1,31 @@
+# FoodFlow DBMS — local MySQL via Docker Compose (optional).
+# Use this if you don't want to install MySQL directly.
+#   docker compose up -d
+#   # then copy .env.example to .env (DATABASE_URL already matches the
+#   # credentials below), run migrations + seed, and start the app:
+#   npx prisma migrate dev
+#   npm run db:seed
+#   npm run dev        # http://localhost:3000
+# Stop it with: docker compose down   (add -v to wipe the data volume)
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: foodflow-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: food_ordering_db
+      MYSQL_USER: foodflow
+      MYSQL_PASSWORD: foodflow_dev_2026
+    ports:
+      - "3306:3306"
+    volumes:
+      - foodflow-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "foodflow", "-pfoodflow_dev_2026"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  foodflow-mysql-data:

@@ -1,0 +1,436 @@
+// FoodFlow DBMS — canonical Prisma schema (MySQL 8, database: food_ordering_db)
+// Production target: Railway MySQL. Local verification may use a SQLite
+// fallback schema (prisma/schema.sqlite.prisma) ONLY if MySQL is unavailable;
+// this file remains the canonical MySQL schema and source of truth.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  RESTAURANT_ADMIN
+  DELIVERY_PARTNER
+  SUPER_ADMIN
+}
+
+enum OrderStatus {
+  PLACED
+  CONFIRMED
+  PREPARING
+  READY_FOR_PICKUP
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REJECTED
+}
+
+enum PaymentMethod {
+  COD
+  UPI_SIMULATED
+  CARD_SIMULATED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum VegType {
+  VEG
+  NON_VEG
+  VEGAN
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String         @db.VarChar(120)
+  email         String         @unique @db.VarChar(160)
+  phone         String?        @db.VarChar(20)
+  password_hash String         @db.VarChar(255)
+  role          Role           @default(CUSTOMER)
+  is_active     Boolean        @default(true)
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+  addresses     Address[]
+  restaurants   Restaurant[]
+  restaurant_admin_links RestaurantAdmin[]
+  carts         Cart[]
+  orders        Order[]
+  reviews       Review[]
+  favourites    Favourite[]
+  notifications Notification[]
+  coupon_usages CouponUsage[]
+  audit_logs    AuditLog[]
+  delivery_partner DeliveryPartner?
+
+  @@map("users")
+  @@index([role])
+  @@index([email])
+}
+
+model Address {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  label      String   @db.VarChar(60) // Home / Work / Other
+  line1      String   @db.VarChar(200)
+  line2      String?  @db.VarChar(200)
+  city       String   @db.VarChar(80)
+  pincode    String   @db.VarChar(10)
+  is_default Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  orders     Order[]
+
+  @@map("addresses")
+  @@index([user_id])
+}
+
+model Restaurant {
+  id             Int       @id @default(autoincrement())
+  owner_id       Int
+  name           String    @db.VarChar(150)
+  description    String?   @db.Text
+  cuisine        String    @db.VarChar(120)
+  address        String    @db.VarChar(250)
+  city           String    @db.VarChar(80)
+  phone          String?   @db.VarChar(20)
+  image_url      String?   @db.VarChar(500)
+  rating         Decimal   @default(0.00) @db.Decimal(3, 2)
+  delivery_fee   Decimal   @default(29.00) @db.Decimal(10, 2)
+  min_order      Decimal   @default(0.00) @db.Decimal(10, 2)
+  delivery_mins  Int       @default(35)
+  is_open        Boolean   @default(true)
+  is_active      Boolean   @default(true)
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+  owner          User      @relation(fields: [owner_id], references: [id], onDelete: Restrict)
+  admins         RestaurantAdmin[]
+  food_items     FoodItem[]
+  orders         Order[]
+  reviews        Review[]
+
+  @@map("restaurants")
+  @@index([owner_id])
+  @@index([cuisine])
+  @@index([city])
+  @@index([is_active, is_open])
+}
+
+// Many-to-many link: a restaurant may have several admins, an admin may
+// manage several restaurants (documented equivalent of Restaurant_Admins).
+model RestaurantAdmin {
+  id            Int        @id @default(autoincrement())
+  restaurant_id Int
+  user_id       Int
+  created_at    DateTime   @default(now())
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  user          User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([restaurant_id, user_id])
+  @@map("restaurant_admins")
+  @@index([user_id])
+}
+
+model Category {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique @db.VarChar(80)
+  slug       String     @unique @db.VarChar(100)
+  image_url  String?    @db.VarChar(500)
+  created_at DateTime   @default(now())
+  food_items FoodItem[]
+
+  @@map("categories")
+}
+
+model FoodItem {
+  id            Int       @id @default(autoincrement())
+  restaurant_id Int
+  category_id   Int
+  name          String    @db.VarChar(150)
+  description   String?   @db.Text
+  price         Decimal   @db.Decimal(10, 2)
+  image_url     String?   @db.VarChar(500)
+  veg_type      VegType   @default(VEG)
+  is_available  Boolean   @default(true)
+  is_veg        Boolean   @default(true)
+  rating        Decimal   @default(0.00) @db.Decimal(3, 2)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  category      Category   @relation(fields: [category_id], references: [id], onDelete: Restrict)
+  inventory     Inventory?
+  cart_items    CartItem[]
+  order_items   OrderItem[]
+  reviews       Review[]
+  favourites    Favourite[]
+
+  @@map("food_items")
+  @@index([restaurant_id])
+  @@index([category_id])
+  @@index([is_available])
+  @@index([name])
+}
+
+model Inventory {
+  id           Int      @id @default(autoincrement())
+  food_item_id Int      @unique
+  stock_qty    Int      @default(0)
+  low_stock_at Int      @default(5)
+  updated_at   DateTime @updatedAt
+  food_item    FoodItem @relation(fields: [food_item_id], references: [id], onDelete: Cascade)
+
+  @@map("inventory")
+}
+
+// One active cart per customer (enforces the one-restaurant-per-cart rule
+// at the data layer: a cart belongs to one restaurant).
+model Cart {
+  id            Int       @id @default(autoincrement())
+  user_id       Int       @unique
+  restaurant_id Int?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  user          User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  items         CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id           Int      @id @default(autoincrement())
+  cart_id      Int
+  food_item_id Int
+  qty          Int      @default(1)
+  created_at   DateTime @default(now())
+  cart         Cart     @relation(fields: [cart_id], references: [id], onDelete: Cascade)
+  food_item    FoodItem @relation(fields: [food_item_id], references: [id], onDelete: Cascade)
+
+  @@unique([cart_id, food_item_id])
+  @@map("cart_items")
+  @@index([food_item_id])
+}
+
+model Order {
+  id               Int         @id @default(autoincrement())
+  user_id          Int
+  restaurant_id    Int
+  address_id       Int?
+  status           OrderStatus @default(PLACED)
+  subtotal         Decimal     @db.Decimal(10, 2)
+  delivery_fee     Decimal     @default(0.00) @db.Decimal(10, 2)
+  tax_amount       Decimal     @default(0.00) @db.Decimal(10, 2)
+  discount_amount  Decimal     @default(0.00) @db.Decimal(10, 2)
+  total_amount     Decimal     @db.Decimal(10, 2)
+  coupon_code      String?     @db.VarChar(40)
+  instructions     String?     @db.VarChar(300)
+  idempotency_key  String?     @unique @db.VarChar(100)
+  placed_at        DateTime    @default(now())
+  created_at       DateTime    @default(now())
+  updated_at       DateTime    @updatedAt
+  user             User        @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  restaurant       Restaurant  @relation(fields: [restaurant_id], references: [id], onDelete: Restrict)
+  address          Address?    @relation(fields: [address_id], references: [id], onDelete: SetNull)
+  items            OrderItem[]
+  payments         Payment[]
+  deliveries       Delivery[]
+  reviews          Review[]
+  status_history   OrderStatusHistory[]
+
+  @@map("orders")
+  @@index([user_id])
+  @@index([restaurant_id])
+  @@index([status])
+  @@index([placed_at])
+}
+
+model OrderItem {
+  id             Int      @id @default(autoincrement())
+  order_id       Int
+  food_item_id   Int?
+  // Price/name snapshots: history stays accurate after menu changes.
+  item_name      String   @db.VarChar(150)
+  unit_price     Decimal  @db.Decimal(10, 2)
+  qty            Int
+  line_total     Decimal  @db.Decimal(10, 2)
+  order          Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  food_item      FoodItem? @relation(fields: [food_item_id], references: [id], onDelete: SetNull)
+
+  @@map("order_items")
+  @@index([order_id])
+}
+
+model Payment {
+  id             Int           @id @default(autoincrement())
+  order_id       Int
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  reference      String?       @db.VarChar(120)
+  status         PaymentStatus @default(PENDING)
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+  order          Order         @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+  @@index([order_id])
+  @@index([status])
+}
+
+model DeliveryPartner {
+  id            Int       @id @default(autoincrement())
+  user_id       Int       @unique
+  vehicle_type  String    @db.VarChar(40) // Bike / Scooter / Bicycle
+  vehicle_no    String?   @db.VarChar(20)
+  is_available  Boolean   @default(true)
+  is_active     Boolean   @default(true)
+  rating        Decimal   @default(0.00) @db.Decimal(3, 2)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  user          User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  deliveries    Delivery[]
+
+  @@map("delivery_partners")
+  @@index([is_available])
+}
+
+model Delivery {
+  id            Int            @id @default(autoincrement())
+  order_id      Int
+  partner_id    Int?
+  status        DeliveryStatus @default(ASSIGNED)
+  assigned_at   DateTime       @default(now())
+  accepted_at   DateTime?
+  picked_up_at  DateTime?
+  delivered_at  DateTime?
+  order         Order          @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  partner       DeliveryPartner? @relation(fields: [partner_id], references: [id], onDelete: SetNull)
+
+  @@map("deliveries")
+  @@index([order_id])
+  @@index([partner_id])
+  @@index([status])
+}
+
+model Coupon {
+  id               Int      @id @default(autoincrement())
+  code             String   @unique @db.VarChar(40)
+  description      String?  @db.VarChar(200)
+  discount_percent Decimal  @db.Decimal(5, 2) // e.g. 20.00 = 20%
+  max_discount     Decimal  @default(0.00) @db.Decimal(10, 2)
+  min_order        Decimal  @default(0.00) @db.Decimal(10, 2)
+  is_active        Boolean  @default(true)
+  valid_from       DateTime @default(now())
+  valid_to         DateTime?
+  created_at       DateTime @default(now())
+  usages           CouponUsage[]
+
+  @@map("coupons")
+  @@index([is_active])
+}
+
+model CouponUsage {
+  id         Int      @id @default(autoincrement())
+  coupon_id  Int
+  user_id    Int
+  order_id   Int      @unique
+  used_at    DateTime @default(now())
+  coupon     Coupon   @relation(fields: [coupon_id], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("coupon_usage")
+  @@index([coupon_id])
+}
+
+model Review {
+  id            Int       @id @default(autoincrement())
+  user_id       Int
+  restaurant_id Int
+  food_item_id  Int?
+  order_id      Int?
+  rating        Int       // 1..5 (CHECK constraint in migration SQL)
+  comment       String?   @db.Text
+  created_at    DateTime  @default(now())
+  user          User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  food_item     FoodItem? @relation(fields: [food_item_id], references: [id], onDelete: SetNull)
+  order         Order?    @relation(fields: [order_id], references: [id], onDelete: SetNull)
+
+  @@map("reviews")
+  @@index([restaurant_id])
+  @@index([food_item_id])
+}
+
+model Favourite {
+  id           Int      @id @default(autoincrement())
+  user_id      Int
+  food_item_id Int
+  created_at   DateTime @default(now())
+  user         User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  food_item    FoodItem @relation(fields: [food_item_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, food_item_id])
+  @@map("favourites")
+}
+
+model Notification {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  title      String   @db.VarChar(150)
+  body       String   @db.VarChar(500)
+  type       String   @db.VarChar(60) // ORDER / PAYMENT / DELIVERY / SYSTEM
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+  @@index([user_id, is_read])
+}
+
+// Status history is written by the APPLICATION (single source of truth).
+// The MySQL trigger in prisma/migrations/*_advanced_sql.sql is provided
+// for academic demonstration only and is NOT applied alongside the app
+// writer, to avoid duplicate history rows. See documentation/db-objects.md.
+model OrderStatusHistory {
+  id         Int         @id @default(autoincrement())
+  order_id   Int
+  old_status OrderStatus?
+  new_status OrderStatus
+  changed_by Int?
+  created_at DateTime    @default(now())
+  order      Order       @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("order_status_history")
+  @@index([order_id])
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  user_id    Int?
+  action     String   @db.VarChar(120)
+  entity     String   @db.VarChar(80)
+  entity_id  Int?
+  details    String?  @db.Text
+  created_at DateTime @default(now())
+  user       User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+  @@index([entity])
+  @@index([created_at])
+}
